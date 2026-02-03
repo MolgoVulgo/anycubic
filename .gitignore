@@ -1,0 +1,45 @@
+# Local sessions / secrets
+.accloud/
+cookies.json
+tokens.json
+session.json
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.der
+*.enc
+
+# HAR + logs
+docs/*.har
+docs/logs/
+docs/mqtt.txt
+*.log
+
+# Python cache / venv
+__pycache__/
+*.pyc
+.venv/
+venv/
+.accloud/session.json
+
+# Build / package artifacts
+build/
+dist/
+*.egg-info/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
+# Compiled / binary artifacts
+*.apk
+*.dll
+*.so
+*.dylib

@@ -1,0 +1,197 @@
+{
+  "base_url": "https://cloud-universe.anycubic.com",
+  "notes": {
+    "auth": "Auth flow uses OAuth code -> access token -> loginWithAccessToken. Subsequent API calls in HAR did not show explicit Authorization header; session likely established server-side.",
+    "headers": {
+      "common": [
+        "Accept: application/json, text/plain, */*",
+        "User-Agent: browser UA",
+        "Origin: https://cloud-universe.anycubic.com",
+        "Referer: https://cloud-universe.anycubic.com/file (or fileDetail)"
+      ],
+      "json": [
+        "Content-Type: application/json"
+      ]
+    }
+  },
+  "auth": {
+    "get_oauth_token": {
+      "method": "GET",
+      "path": "/p/p/workbench/api/v3/public/getoauthToken",
+      "query": {
+        "code": "<oauth_code>"
+      },
+      "response": {
+        "code": 1,
+        "data": {
+          "id_token": "<jwt>"
+        }
+      }
+    },
+    "login_with_access_token": {
+      "method": "POST",
+      "path": "/p/p/workbench/api/v3/public/loginWithAccessToken",
+      "body_json": {
+        "access_token": "<jwt>"
+      },
+      "response": {
+        "code": 1,
+        "data": {
+          "login_status": 1,
+          "token": "<session_token>",
+          "user": "<user object>"
+        }
+      }
+    }
+  },
+  "quota": {
+    "get_user_store": {
+      "method": "POST",
+      "path": "/p/p/workbench/api/work/index/getUserStore",
+      "body_json": {},
+      "response": {
+        "code": 1,
+        "data": {
+          "used_bytes": 0,
+          "total_bytes": 0,
+          "used": "",
+          "total": ""
+        }
+      }
+    }
+  },
+  "files": {
+    "list": {
+      "method": "POST",
+      "path": "/p/p/workbench/api/work/index/files",
+      "body_json": {
+        "page": 1,
+        "limit": 10
+      },
+      "response": {
+        "code": 1,
+        "data": [
+          "<file objects>"
+        ],
+        "fields": {
+          "thumbnail": "<thumbnail_url>",
+          "gcode_id": "<gcode_id>"
+        }
+      }
+    },
+    "download_url": {
+      "method": "POST",
+      "path": "/p/p/workbench/api/work/index/getDowdLoadUrl",
+      "body_json": {
+        "id": "<file_id>"
+      },
+      "response": {
+        "code": 1,
+        "data": "<signed_s3_url>"
+      }
+    },
+    "delete": {
+      "method": "POST",
+      "path": "/p/p/workbench/api/work/index/delFiles",
+      "body_json": {
+        "idArr": [
+          "<file_id>"
+        ]
+      },
+      "response": {
+        "code": 1,
+        "data": ""
+      }
+    },
+    "rename": {
+      "method": "POST",
+      "path": "/p/p/workbench/api/work/index/renameFile",
+      "body_json": {
+        "id": "<file_id>",
+        "name": "<new_name>"
+      },
+      "response": {
+        "code": 1,
+        "data": "<name>"
+      }
+    },
+    "upload_status": {
+      "method": "POST",
+      "path": "/p/p/workbench/api/work/index/getUploadStatus",
+      "body_json": {
+        "id": "<file_id>"
+      },
+      "response": {
+        "code": 1,
+        "data": {
+          "status": 1,
+          "gcode_id": "<gcode_id>"
+        }
+      }
+    }
+  },
+  "info": {
+    "gcode_info": {
+      "method": "GET",
+      "path": "/p/p/workbench/api/api/work/gcode/info",
+      "query": {
+        "id": "<gcode_id>"
+      },
+      "response": {
+        "code": 1,
+        "data": "<gcode info object>"
+      }
+    }
+  },
+  "upload": {
+    "lock_storage_space": {
+      "method": "POST",
+      "path": "/p/p/workbench/api/v2/cloud_storage/lockStorageSpace",
+      "body_json": {
+        "name": "<filename>",
+        "size": 0,
+        "is_temp_file": 0
+      },
+      "response": {
+        "code": 1,
+        "data": {
+          "id": "<lock_id>",
+          "preSignUrl": "<signed_s3_put_url>"
+        }
+      }
+    },
+    "s3_put": {
+      "method": "PUT",
+      "url": "<preSignUrl>",
+      "headers": {
+        "Content-Type": "multipart/form-data (as observed)"
+      },
+      "body": "<raw file bytes>"
+    },
+    "new_upload_file": {
+      "method": "POST",
+      "path": "/p/p/workbench/api/v2/profile/newUploadFile",
+      "body_json": {
+        "user_lock_space_id": "<lock_id>"
+      },
+      "response": {
+        "code": 1,
+        "data": {
+          "id": "<file_id>"
+        }
+      }
+    },
+    "unlock_storage_space": {
+      "method": "POST",
+      "path": "/p/p/workbench/api/v2/cloud_storage/unlockStorageSpace",
+      "body_json": {
+        "id": "<lock_id>",
+        "is_delete_cos": 0
+      },
+      "response": {
+        "code": 1,
+        "data": ""
+      }
+    }
+  }
+}
