@@ -92,6 +92,22 @@ def _fmt_num(val: Optional[float], unit: str = "", decimals: int = 2) -> str:
     return f"{num:.{decimals}f}{unit}"
 
 
+def _format_minutes_hm(minutes_val) -> str:
+    if minutes_val in (None, ""):
+        return "-"
+    try:
+        total = int(float(minutes_val))
+    except (TypeError, ValueError):
+        return "-"
+    if total < 0:
+        return "-"
+    if total >= 60:
+        h = total // 60
+        m = total % 60
+        return f"{h}h {m:02d}m"
+    return f"{total}m"
+
+
 class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -106,14 +122,19 @@ class App:
         self._mqtt_log_path = os.path.join("docs", "logs", "cloud_Log.log")
         self._mqtt_tail_offset = 0
         self._mqtt_missing_logged = False
+        self._mqtt_out_log_path = os.path.join(os.getcwd(), "accloud_mqtt.log")
         self._printers_cache = []
         self._last_printer_info = None
         self._last_job_item = None
         self._last_video_response = None
         self._has_active_print = False
+        self._printer_poll_interval_idle_ms = 15000
+        self._printer_poll_interval_active_ms = 5000
+        self._printer_poll_after_id = None
         self._build_ui()
         self._auto_load()
         self._start_mqtt_tail()
+        self._start_printer_poll()
 
     def _build_ui(self) -> None:
         menubar = tk.Menu(self.root)
@@ -152,37 +173,43 @@ class App:
         notebook.add(print_tab, text="Print")
         notebook.add(log_tab, text="LOG")
 
-        info = ttk.Frame(files_tab, padding=10)
-        info.pack(fill="x")
-        self.quota_var = tk.StringVar(value="Quota: -")
-        ttk.Label(info, textvariable=self.quota_var).pack(side="left")
-
-        actions = ttk.Frame(files_tab, padding=10)
-        actions.pack(fill="x")
-        ttk.Button(actions, text="Refresh list", command=self.refresh_list).pack(side="left")
-        ttk.Button(actions, text="Upload file", command=self.upload_dialog).pack(side="left", padx=6)
-        ttk.Button(actions, text="Download", command=self.download_selected).pack(side="left", padx=6)
-        ttk.Button(actions, text="Delete", command=self.delete_selected).pack(side="left", padx=6)
+        header = ttk.Frame(files_tab, padding=10)
+        header.pack(fill="x")
+        header_left = ttk.Frame(header)
+        header_left.pack(side="left")
+        ttk.Button(header_left, text="Upload file", command=self.upload_dialog).pack(side="left")
+        header_center = ttk.Frame(header)
+        header_center.pack(side="left", fill="x", expand=True)
+        self.quota_var = tk.StringVar(value="Space use: -/-")
+        ttk.Label(header_center, textvariable=self.quota_var, foreground="#666666").pack(anchor="center")
+        header_right = ttk.Frame(header)
+        header_right.pack(side="right")
+        ttk.Button(header_right, text="Quick import", command=self.upload_dialog).pack(side="right")
 
         self.tree = ttk.Treeview(
             files_tab,
-            columns=("name", "size", "created", "info"),
+            columns=("name", "size", "created", "details", "actions"),
             show="tree headings",
             selectmode="extended",
         )
         style = ttk.Style(self.root)
-        style.configure("Treeview", rowheight=150)
+        style.configure("Treeview", rowheight=110)
         self.tree.heading("#0", text="Image")
         self.tree.heading("name", text="Name")
         self.tree.heading("size", text="Size")
-        self.tree.heading("created", text="Date")
-        self.tree.heading("info", text="Info (select)")
+        self.tree.heading("created", text="Add time")
+        self.tree.heading("details", text="Details")
+        self.tree.heading("actions", text="Actions")
         self.tree.column("#0", width=150, anchor="center")
-        self.tree.column("name", width=420, anchor="w")
-        self.tree.column("size", width=120, anchor="e")
-        self.tree.column("created", width=120, anchor="center")
-        self.tree.column("info", width=110, anchor="center")
-        self.tree.pack(fill="both", expand=True, padx=10, pady=10)
+        self.tree.column("name", width=380, anchor="w")
+        self.tree.column("size", width=150, anchor="w")
+        self.tree.column("created", width=190, anchor="w")
+        self.tree.column("details", width=90, anchor="center")
+        self.tree.column("actions", width=150, anchor="center")
+        tree_scroll = ttk.Scrollbar(files_tab, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_scroll.set)
+        self.tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=10)
+        tree_scroll.pack(side="left", fill="y", pady=10)
 
         printer_frame = ttk.Frame(printer_tab, padding=10)
         printer_frame.pack(fill="x")
@@ -211,12 +238,10 @@ class App:
         self.job_printer_name = tk.StringVar(value="-")
         self.job_printer_status = tk.StringVar(value="-")
         self.job_printer_type = tk.StringVar(value="-")
-        self.job_device_cn = tk.StringVar(value="-")
 
         self._kv_row(left_panel, "Name", self.job_printer_name)
         self._kv_row(left_panel, "Status", self.job_printer_status)
-        self._kv_row(left_panel, "Printer type", self.job_printer_type)
-        self._kv_row(left_panel, "Device CN", self.job_device_cn)
+        self._kv_row(left_panel, "Resin", self.job_printer_type)
 
         self.job_filename = tk.StringVar(value="-")
         self.job_progress = tk.StringVar(value="-")
@@ -348,6 +373,11 @@ class App:
         self.mqtt_box.insert("1.0", line)
         self.mqtt_box.see("1.0")
         self.mqtt_box.configure(state="disabled")
+        try:
+            with open(self._mqtt_out_log_path, "a", encoding="utf-8") as handle:
+                handle.write(line)
+        except Exception:
+            pass
 
     def _print_log(self, msg: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -372,6 +402,25 @@ class App:
 
     def _start_mqtt_tail(self) -> None:
         self.root.after(500, self._poll_mqtt_log)
+
+    def _start_printer_poll(self) -> None:
+        self._schedule_printer_poll(1500)
+
+    def _schedule_printer_poll(self, delay_ms: int) -> None:
+        if self._printer_poll_after_id is not None:
+            try:
+                self.root.after_cancel(self._printer_poll_after_id)
+            except tk.TclError:
+                pass
+        self._printer_poll_after_id = self.root.after(delay_ms, self._poll_printer_status)
+
+    def _poll_printer_status(self) -> None:
+        pid = self._print_tab_printer_id()
+        if self.client and pid:
+            self.refresh_print_projects()
+            self.refresh_task_list()
+        next_delay = self._printer_poll_interval_active_ms if self._has_active_print else self._printer_poll_interval_idle_ms
+        self._schedule_printer_poll(next_delay)
 
     def _poll_mqtt_log(self) -> None:
         if not os.path.exists(self._mqtt_log_path):
@@ -422,23 +471,33 @@ class App:
     def _on_tree_click_release(self, event) -> None:
         col = self.tree.identify_column(event.x)
         row = self.tree.identify_row(event.y)
-        self._log(f"Click release on row={row} col={col}")
         if not row:
             return
-        if col == "#4":  # Info column
+        if col == "#4":  # Details column
             file_id = self._resolve_file_id(row)
             if file_id:
                 self._open_info_for_id(file_id)
+        elif col == "#5":  # Actions column
+            file_id = self._resolve_file_id(row)
+            if file_id:
+                self._open_actions_menu(event, file_id)
 
     def _on_tree_select(self, _event=None) -> None:
         ids = self._selected_ids()
-        self._log(f"Tree selection: {ids}")
         if not ids:
             return
         file_id = self._resolve_file_id(ids[0])
         if file_id:
             self._prefill_print_from_file(file_id)
-            self._open_info_for_id(file_id)
+
+    def _open_actions_menu(self, event, file_id: str) -> None:
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Download", command=lambda fid=file_id: self._download_file_id(fid))
+        menu.add_command(label="Delete", command=lambda fid=file_id: self._delete_file_id(fid))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     def _open_info_for_id(self, file_id: str) -> None:
         item = self.items_by_id.get(file_id)
@@ -773,6 +832,9 @@ class App:
             self._print_log("Send print: OK")
             self._print_log(json.dumps(data, indent=2, ensure_ascii=True))
             self._set_status("Print order sent")
+            self.refresh_print_projects()
+            self.refresh_task_list()
+            self._schedule_printer_poll(2000)
 
         def on_err(exc: Exception) -> None:
             self._print_log(f"Send print failed: {exc}")
@@ -842,6 +904,9 @@ class App:
             self._log("Print order sent")
             self._log(json.dumps(data, indent=2, ensure_ascii=True))
             self._set_status("Print order sent")
+            self.refresh_print_projects()
+            self.refresh_task_list()
+            self._schedule_printer_poll(2000)
 
         def on_err(exc: Exception) -> None:
             self._log(f"Print order failed: {exc}")
@@ -877,7 +942,8 @@ class App:
 
         def done(data):
             items = self._task_items(data)
-            self._has_active_print = len(items) > 0
+            active = len(items) > 0
+            self._apply_print_state(active, source="projects")
             if items:
                 self._update_job_ui_from_task(items[0])
             else:
@@ -916,7 +982,8 @@ class App:
         def done(data):
             self._render_task_list(self.printer_box, data)
             items = self._task_items(data.get("1") if isinstance(data, dict) else [])
-            self._has_active_print = len(items) > 0
+            active = len(items) > 0
+            self._apply_print_state(active, source="tasks")
             self._set_status("Task list loaded")
 
         def on_err(exc: Exception) -> None:
@@ -952,10 +1019,11 @@ class App:
 
     def _job_status_text(self, item: dict, settings: dict) -> str:
         connect_status = item.get("connect_status")
+        device_status = item.get("device_status")
         print_status = item.get("print_status")
         pause = item.get("pause")
         state = settings.get("state")
-        if connect_status == 0:
+        if connect_status in (0, "0") or device_status in (0, "0"):
             return "Offline"
         if state == "printing" or print_status == 1:
             return "Busy"
@@ -963,11 +1031,25 @@ class App:
             return "Paused"
         return "Idle"
 
+    def _apply_print_state(self, active: bool, source: str) -> None:
+        if active == self._has_active_print:
+            return
+        self._has_active_print = active
+        if active:
+            self._log("Impression lancée (détection auto).")
+            self._set_status("Impression en cours")
+            return
+        self._log("Impression terminée (détection auto).")
+        self._set_status("Impression terminée")
+        try:
+            messagebox.showinfo("Printer", "Impression terminée.")
+        except tk.TclError:
+            pass
+
     def _reset_job_ui(self) -> None:
         self.job_printer_name.set("-")
         self.job_printer_status.set("-")
         self.job_printer_type.set("-")
-        self.job_device_cn.set("-")
         self._last_job_item = None
         self.job_filename.set("-")
         self.job_state.set("-")
@@ -1009,7 +1091,7 @@ class App:
         remain_time = settings.get("remain_time")
         if remain_time is None:
             remain_time = item.get("remain_time")
-        remaining_text = f"{remain_time}m" if remain_time not in (None, "") else "-"
+        remaining_text = _format_minutes_hm(remain_time)
 
         print_time = item.get("print_time")
         if isinstance(print_time, (int, float)) and print_time >= 0:
@@ -1035,8 +1117,8 @@ class App:
 
         self.job_printer_name.set(item.get("printer_name") or item.get("machine_name") or "-")
         self.job_printer_status.set(self._job_status_text(item, settings))
-        self.job_printer_type.set(item.get("machine_name") or slice_param.get("machine_name") or "-")
-        self.job_device_cn.set(item.get("key") or "-")
+        resin_type = slice_param.get("material_type") or settings.get("material_type") or "-"
+        self.job_printer_type.set(resin_type)
         self.job_filename.set(filename)
         self.job_state.set(settings.get("state") or item.get("print_status") or "-")
         self.job_progress.set(f"{progress_val}%")
@@ -1111,6 +1193,7 @@ class App:
     def _on_printer_selected(self) -> None:
         self.refresh_print_projects()
         self.refresh_task_list()
+        self._schedule_printer_poll(1500)
 
     def refresh_print_printer_info(self) -> None:
         pid = self._print_tab_printer_id()
@@ -1279,8 +1362,7 @@ class App:
         def done(quota):
             free = quota.total_bytes - quota.used_bytes
             self.quota_var.set(
-                f"Quota: {format_bytes(quota.used_bytes)} used / {format_bytes(quota.total_bytes)} total"
-                f" (free {format_bytes(free)})"
+                f"Space use: {format_bytes(quota.used_bytes)}/{format_bytes(quota.total_bytes)}"
             )
             self._set_status("Quota updated")
 
@@ -1304,10 +1386,11 @@ class App:
                     iid=item.id,
                     text="",
                     values=(
-                        _strip_pwmb(item.name),
-                        _format_mo_go(item.size_bytes),
-                        _format_date_short(item.created_at),
-                        "Info",
+                        item.name,
+                        f"Size: {_format_mb(item.size_bytes)}",
+                        f"Add time: {_format_ts(item.created_at)}",
+                        "Details",
+                        "Delete | Download",
                     ),
                 )
                 self._tree_id_map[row_id] = item.id
@@ -1334,10 +1417,10 @@ class App:
 
     def _selected_ids(self):
         ids = []
-        for item in self.tree.selection():
-            vals = self.tree.item(item, "values")
-            if vals:
-                ids.append(vals[0])
+        for row_id in self.tree.selection():
+            file_id = self._resolve_file_id(row_id)
+            if file_id:
+                ids.append(file_id)
         return ids
 
     def download_selected(self) -> None:
@@ -1345,7 +1428,9 @@ class App:
         if not ids:
             messagebox.showinfo("Download", "Select one file to download.")
             return
-        file_id = ids[0]
+        self._download_file_id(ids[0])
+
+    def _download_file_id(self, file_id: str) -> None:
         path = filedialog.asksaveasfilename(title="Save file as")
         if not path:
             return
@@ -1371,6 +1456,15 @@ class App:
         ids = self._selected_ids()
         if not ids:
             messagebox.showinfo("Delete", "Select files to delete.")
+            return
+        self._delete_file_id(ids)
+
+    def _delete_file_id(self, file_ids) -> None:
+        if isinstance(file_ids, str):
+            ids = [file_ids]
+        else:
+            ids = list(file_ids)
+        if not ids:
             return
         if not messagebox.askyesno("Delete", f"Delete {len(ids)} file(s)?"):
             return

@@ -18,6 +18,8 @@ docs/*.har
 docs/logs/
 docs/mqtt.txt
 *.log
+accloud_http.log
+accloud_mqtt.log
 
 # Python cache / venv
 __pycache__/

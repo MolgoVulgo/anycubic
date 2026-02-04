@@ -1,5 +1,7 @@
 from typing import Any, Dict, Optional
 import hashlib
+import json
+import os
 import time
 import uuid
 
@@ -11,7 +13,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - user environment depend
     ) from exc
 
 from endpoints import BASE_URL
-from .utils import get_logger, redacted_headers
+from .utils import append_log_line, get_logger, redact_payload, redacted_headers, truncate_text
 
 
 class CloudClient:
@@ -28,6 +30,7 @@ class CloudClient:
         self.timeout = timeout
         self.logger = get_logger('accloud')
         self._client = httpx.Client(base_url=self.base_url, cookies=self.cookies, timeout=self.timeout)
+        self.http_log_path = os.path.join(os.getcwd(), "accloud_http.log")
 
         # Constants extracted from web app bundle (HAR)
         self._app_id = "f9b3528877c94d5c9c5af32245db46ef"
@@ -61,8 +64,28 @@ class CloudClient:
         headers = dict(self._default_headers())
         headers.update(kwargs.get('headers', {}) or {})
         kwargs['headers'] = headers
-        self.logger.debug('HTTP %s %s headers=%s', method, url, redacted_headers(headers))
+        redacted = redacted_headers(headers)
+        payload = None
+        if "json" in kwargs:
+            payload = redact_payload(kwargs.get("json"))
+        elif "data" in kwargs:
+            payload = kwargs.get("data")
+        self.logger.debug('HTTP %s %s headers=%s', method, url, redacted)
+        if payload is not None:
+            append_log_line(self.http_log_path, f"{method} {url} headers={redacted} payload={payload}")
+        else:
+            append_log_line(self.http_log_path, f"{method} {url} headers={redacted}")
         resp = self._client.request(method, url, **kwargs)
+        response_body: Any = None
+        try:
+            response_body = resp.json()
+            response_body = redact_payload(response_body)
+        except Exception:
+            response_body = truncate_text(resp.text or "")
+        append_log_line(
+            self.http_log_path,
+            f"{method} {url} status={resp.status_code} response={json.dumps(response_body, ensure_ascii=True)}",
+        )
         resp.raise_for_status()
         return resp
 
