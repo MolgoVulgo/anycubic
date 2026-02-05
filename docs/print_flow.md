@@ -1,6 +1,6 @@
 # Processus d'impression (extrait des logs)
 
-Ce document décrit le flux observé **depuis la sélection d'un fichier jusqu'au lancement de l'impression**, en listant les **requêtes HTTP (GET/POST)** et les **messages MQTT** visibles dans `docs/logs`.
+Ce document décrit le flux observé **depuis la sélection d'un fichier jusqu'au lancement de l'impression**, en listant les **requêtes HTTP (GET/POST)** visibles dans `docs/logs`.
 
 ## 1) Sélection du fichier (liste des fichiers)
 
@@ -76,19 +76,6 @@ Dans `docs/logs/application_Log.log`, on voit également :
 - `ctrlPrint` → `order = 1`
 - `onCtrlPrinterResult` → `taskId = 70271310`
 
-## 4) MQTT (suivi temps réel)
-
-Après la commande, le broker MQTT publie des messages **status/print** :
-
-- `{"type":"print", ...}` (payload len 525)
-- `{"type":"status", ...}`
-- `{"type":"lastWill", ...}`
-
-Chaque réception est suivie d’un **ACK** envoyé par le client :
-
-- `{"msgid": "..."}`
-
-**Note** : les payloads MQTT sont tronqués dans les logs, et **aucun topic n’apparaît**.
 
 ## 5) Résumé de la “commande” d’impression
 
@@ -112,4 +99,3 @@ Le suivi s’effectue ensuite par :
 
 - `GET /work/project/getProjects` (tâche + gcode_id + status)
 - `GET /v2/printer/info` (état machine)
-- MQTT `print/status` (temps réel)

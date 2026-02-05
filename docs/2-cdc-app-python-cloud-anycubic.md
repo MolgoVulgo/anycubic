@@ -82,6 +82,7 @@ Deux modes (priorité à la robustesse) :
 
 * Log niveaux : ERROR / WARN / INFO / DEBUG
 * DEBUG affiche : endpoint + status + latence, sans secrets
+* `accloud_http.log` : journalier, rotation 7 jours, archives `.tar.gz`
 
 ### D. Portabilité
 

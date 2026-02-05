@@ -1,9 +1,8 @@
-import os
 from datetime import datetime
 from typing import Callable, Optional
 
-import httpx
 import os
+import httpx
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
@@ -19,11 +18,20 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
-from ...api import delete_files, get_download_url, get_gcode_info, get_quota, list_files, upload_file
+from ...api import (
+    delete_files,
+    get_download_url,
+    get_gcode_info,
+    get_quota,
+    list_files,
+    upload_file,
+)
 from ...client import CloudClient
 from ...models import FileItem
+from ...image_cache import fetch_image_bytes
 from ..threads import TaskRunner
 from .file_details import FileDetailsWindow
+from .print_dialog import PrintDialog
 
 
 def _format_ts(ts: int) -> str:
@@ -47,6 +55,7 @@ class FileCard(QFrame):
         item: FileItem,
         on_details: Callable[[FileItem], None],
         on_delete: Callable[[FileItem], None],
+        on_rename: Callable[[FileItem], None],
         on_print: Callable[[FileItem], None],
         on_download: Callable[[FileItem], None],
         parent: Optional[QWidget] = None,
@@ -55,6 +64,7 @@ class FileCard(QFrame):
         self.item = item
         self._on_details = on_details
         self._on_delete = on_delete
+        self._on_rename = on_rename
         self._on_print = on_print
         self._on_download = on_download
         self.thumb_label = QLabel()
@@ -93,6 +103,17 @@ class FileCard(QFrame):
 
         header = QHBoxLayout()
         header.addStretch(1)
+        rename_btn = QPushButton()
+        rename_btn.setCursor(Qt.PointingHandCursor)
+        rename_btn.setFlat(True)
+        rename_btn.setStyleSheet("padding: 2px;")
+        rename_icon_path = os.path.join(os.path.dirname(__file__), "..", "asset", "main_details_more_icon.png")
+        rename_btn.setIcon(QIcon(os.path.abspath(rename_icon_path)))
+        rename_btn.setIconSize(QSize(16, 16))
+        rename_btn.setToolTip("Rename file")
+        rename_btn.clicked.connect(lambda: self._on_rename(self.item))
+        header.addWidget(rename_btn, alignment=Qt.AlignRight)
+
         delete_btn = QPushButton()
         delete_btn.setCursor(Qt.PointingHandCursor)
         delete_btn.setFlat(True)
@@ -100,6 +121,7 @@ class FileCard(QFrame):
         icon_path = os.path.join(os.path.dirname(__file__), "..", "asset", "bin.png")
         delete_btn.setIcon(QIcon(os.path.abspath(icon_path)))
         delete_btn.setIconSize(QSize(16, 16))
+        delete_btn.setToolTip("Delete file")
         delete_btn.clicked.connect(lambda: self._on_delete(self.item))
         header.addWidget(delete_btn, alignment=Qt.AlignRight)
 
@@ -125,16 +147,19 @@ class FileCard(QFrame):
         details_btn.setStyleSheet("background: #1d6fd6; color: #ffffff;")
         details_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         details_btn.setCursor(Qt.PointingHandCursor)
+        details_btn.setToolTip("View file details")
         details_btn.clicked.connect(lambda: self._on_details(self.item))
         print_btn = QPushButton("Print")
         print_btn.setStyleSheet("background: #1d6fd6; color: #ffffff;")
         print_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         print_btn.setCursor(Qt.PointingHandCursor)
+        print_btn.setToolTip("Print this file")
         print_btn.clicked.connect(lambda: self._on_print(self.item))
         download_btn = QPushButton("Download")
         download_btn.setStyleSheet("background: #1d6fd6; color: #ffffff;")
         download_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         download_btn.setCursor(Qt.PointingHandCursor)
+        download_btn.setToolTip("Download file")
         download_btn.clicked.connect(lambda: self._on_download(self.item))
         buttons_row.addWidget(details_btn)
         buttons_row.addWidget(print_btn)
@@ -165,6 +190,7 @@ class FilesTab(QWidget):
         header = QHBoxLayout()
         self.upload_btn = QPushButton("Upload file")
         self.upload_btn.setCursor(Qt.PointingHandCursor)
+        self.upload_btn.setToolTip("Upload a file")
         self.upload_btn.clicked.connect(self._upload_dialog)
         header.addWidget(self.upload_btn, alignment=Qt.AlignLeft)
 
@@ -176,6 +202,7 @@ class FilesTab(QWidget):
 
         self.quick_btn = QPushButton("Quick import")
         self.quick_btn.setCursor(Qt.PointingHandCursor)
+        self.quick_btn.setToolTip("Quick import a file")
         self.quick_btn.clicked.connect(self._upload_dialog)
         header.addWidget(self.quick_btn, alignment=Qt.AlignRight)
         root.addLayout(header)
@@ -218,6 +245,7 @@ class FilesTab(QWidget):
                 item,
                 on_details=self._open_details,
                 on_delete=self._delete_item,
+                on_rename=self._rename_item,
                 on_print=self._print_item,
                 on_download=self._download_item,
             )
@@ -292,8 +320,15 @@ class FilesTab(QWidget):
 
         self._runner.run(work, on_result=done, on_error=self._on_error)
 
+    def _rename_item(self, item: FileItem) -> None:
+        QMessageBox.information(self, "Rename", "Rename not implemented in Qt UI yet.")
+
     def _print_item(self, item: FileItem) -> None:
-        QMessageBox.information(self, "Print", "Print not implemented in Qt UI yet.")
+        if not self._client:
+            QMessageBox.information(self, "Print", "Load a session first.")
+            return
+        dialog = PrintDialog(self._client, item, parent=self)
+        dialog.exec()
 
     def _open_details(self, item: FileItem) -> None:
         if not self._client:
@@ -334,9 +369,7 @@ class FilesTab(QWidget):
 
     def _load_thumbnail(self, item: FileItem, card: FileCard) -> None:
         def work():
-            with httpx.stream("GET", item.thumbnail, timeout=20.0) as resp:
-                resp.raise_for_status()
-                return resp.read()
+            return fetch_image_bytes(item.thumbnail, timeout=20.0)
 
         def done(data: bytes):
             if not data:

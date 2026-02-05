@@ -9,8 +9,8 @@ from ..session_store import DEFAULT_SESSION_PATH, load_session, load_session_fro
 from .state import AppState
 from .views.files_tab import FilesTab
 from .views.log_tab import LogTab
-from .views.mqtt_tab import MqttTab
 from .views.printer_tab import PrinterTab
+from .views.task_history_tab import TaskHistoryTab
 
 
 class MainWindow(QMainWindow):
@@ -26,18 +26,19 @@ class MainWindow(QMainWindow):
 
         self.files_tab = FilesTab(status_cb=self._set_status)
         self.printer_tab = PrinterTab(status_cb=self._set_status)
-        self.mqtt_tab = MqttTab()
+        self.task_history_tab = TaskHistoryTab(status_cb=self._set_status)
         self.log_tab = LogTab()
 
         self.tabs.addTab(self.files_tab, "Files")
         self.tabs.addTab(self.printer_tab, "Printer")
-        self.tabs.addTab(self.mqtt_tab, "MQTT")
+        self.tabs.addTab(self.task_history_tab, "Task History")
         self.tabs.addTab(self.log_tab, "LOG")
 
         self._build_menu()
         self.statusBar().showMessage("Ready")
         self._auto_load_session()
         self._apply_pointer_cursors()
+        self.printer_tab.set_printer_id_callback(self.task_history_tab.set_printer_id)
 
     def _apply_pointer_cursors(self) -> None:
         for btn in self.findChildren(QPushButton):
@@ -48,10 +49,12 @@ class MainWindow(QMainWindow):
     def _build_menu(self) -> None:
         menu = self.menuBar().addMenu("Session")
         act_session = QAction("Load session.json", self)
+        act_session.setStatusTip("Load a session.json file")
         act_session.triggered.connect(self._load_session_dialog)
         menu.addAction(act_session)
 
         act_har = QAction("Import HAR", self)
+        act_har.setStatusTip("Import a HAR file to create a session")
         act_har.triggered.connect(self._import_har_dialog)
         menu.addAction(act_har)
 
@@ -77,6 +80,7 @@ class MainWindow(QMainWindow):
         self.state.session_path = path
         self.files_tab.set_client(client)
         self.printer_tab.set_client(client)
+        self.task_history_tab.set_client(client)
         self._set_status(f"Session loaded: {path}")
 
     def _auto_load_session(self) -> None:

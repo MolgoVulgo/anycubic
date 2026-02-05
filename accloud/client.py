@@ -72,9 +72,21 @@ class CloudClient:
             payload = kwargs.get("data")
         self.logger.debug('HTTP %s %s headers=%s', method, url, redacted)
         if payload is not None:
-            append_log_line(self.http_log_path, f"{method} {url} headers={redacted} payload={payload}")
+            append_log_line(
+                self.http_log_path,
+                f"{method} {url} headers={redacted} payload={payload}",
+                rotate_daily=True,
+                keep_days=7,
+                compress=True,
+            )
         else:
-            append_log_line(self.http_log_path, f"{method} {url} headers={redacted}")
+            append_log_line(
+                self.http_log_path,
+                f"{method} {url} headers={redacted}",
+                rotate_daily=True,
+                keep_days=7,
+                compress=True,
+            )
         resp = self._client.request(method, url, **kwargs)
         response_body: Any = None
         try:
@@ -85,6 +97,9 @@ class CloudClient:
         append_log_line(
             self.http_log_path,
             f"{method} {url} status={resp.status_code} response={json.dumps(response_body, ensure_ascii=True)}",
+            rotate_daily=True,
+            keep_days=7,
+            compress=True,
         )
         resp.raise_for_status()
         return resp

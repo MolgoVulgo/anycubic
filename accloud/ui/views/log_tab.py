@@ -10,6 +10,7 @@ class LogTailWidget(QWidget):
         super().__init__(parent)
         self.path = path
         self._offset = 0
+        self._last_size = 0
 
         layout = QVBoxLayout(self)
         self.status = QLabel(f"Log file: {self.path}")
@@ -26,17 +27,25 @@ class LogTailWidget(QWidget):
     def _poll(self) -> None:
         if not os.path.exists(self.path):
             self.status.setText(f"Log file not found: {self.path}")
+            self._offset = 0
+            self._last_size = 0
             return
         try:
+            size = os.path.getsize(self.path)
+            if size < self._offset:
+                self._offset = 0
+                self.box.clear()
             with open(self.path, "r", encoding="utf-8", errors="ignore") as handle:
                 handle.seek(self._offset)
                 data = handle.read()
                 self._offset = handle.tell()
+                self._last_size = size
             if data:
                 cursor = self.box.textCursor()
-                cursor.movePosition(QTextCursor.Start)
+                cursor.movePosition(QTextCursor.End)
                 cursor.insertText(data)
                 self.box.setTextCursor(cursor)
+                self.box.ensureCursorVisible()
         except Exception as exc:
             self.status.setText(f"Log read error: {exc}")
 

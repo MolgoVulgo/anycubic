@@ -2,7 +2,6 @@ import json
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-import httpx
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
@@ -16,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..threads import TaskRunner
+from ...image_cache import fetch_image_bytes
 
 
 def _format_ts(ts: Optional[int]) -> str:
@@ -212,9 +212,7 @@ class FileDetailsWindow(QDialog):
 
     def _load_preview_from_url(self, url: str) -> None:
         def work():
-            with httpx.stream("GET", url, timeout=20.0) as resp:
-                resp.raise_for_status()
-                return resp.read()
+            return fetch_image_bytes(url, timeout=20.0)
 
         def done(data: bytes):
             if not data:

@@ -29,40 +29,18 @@ Fichiers :
 - `/home/kaj/Downloads/Anycubic_1.1.27_apkcombo.com/smali/ac/cloud/common/constant/ConfigConstants.smali`
 - `/home/kaj/Downloads/Anycubic_1.1.27_apkcombo.com/smali/e/b.smali`
 
-## 2) MQTT (hosts/port/topics)
+## 2) Chaîne vidéo / streaming
 
-Hosts/port (strings.xml) :
-- `release_mqtt_host = mqtt.anycubicloud.com`
-- `test_mqtt_host = mqtt-test.anycubicloud.com`
-- `dev_mqtt_host = storage.cloud.anycubic.com`
-- `mqtt_server_port = 8883`
-
-Topics (strings.xml) :
-- `topic_printer = anycubic/anycubicCloud/v1/printer/app/`
-- `topic_server = anycubic/anycubicCloud/v1/server/app/`
-- `topic_plus = anycubic/anycubicCloud/v1/+/public/`
-- `topic_publish = anycubic/anycubicCloud/v1/app/`
-
-Initialisation :
-- `e/a.smali` assigne ces valeurs via `MqttServiceConstants$MQTTConfig$Companion` (setTOPIC_*, set*_MQTT_HOST, setMQTT_SERVER_PORT).
-
-Fichiers :
-- `/home/kaj/Downloads/Anycubic_1.1.27_apkcombo.com/res/values/strings.xml`
-- `/home/kaj/Downloads/Anycubic_1.1.27_apkcombo.com/smali/e/a.smali`
-- `/home/kaj/Downloads/Anycubic_1.1.27_apkcombo.com/smali_classes6/com/cloud/mqttservice/MqttServiceConstants$MQTTConfig$Companion.smali`
-
-## 3) Chaîne vidéo / streaming (MQTT → UI → peer)
-
-Signal vidéo via MQTT :
-- `BaseMqttHandleActivity` route l’event `EventMessage.key == 0x3e9` vers `onMqttPrintVideoCaptureEvent(PeerCredentials)`.
-- `FDMTaskDetailsActivity` et `LCDTaskDetailsActivity` enregistrent un `ReceivedMqttMsgEventParamBean` avec :
+Signal vidéo :
+-- `BaseMqttHandleActivity` route l’event `EventMessage.key == 0x3e9` vers `onMqttPrintVideoCaptureEvent(PeerCredentials)`.
+-- `FDMTaskDetailsActivity` et `LCDTaskDetailsActivity` enregistrent un `ReceivedMqttMsgEventParamBean` avec :
   - `eventMessageKey = 0x3e9`
   - `deviceId = PrintProjectV2Response.key`
   - `targetClazz = PeerCredentials`
 
 Traitement d’event vidéo :
 - `onMqttPrintVideoCaptureEvent` vérifie `deviceId` puis traite :
-  - `action = "stopCapture"` → affiche erreur “video_stopCapture”
+-- `action = "stopCapture"` → affiche erreur “video_stopCapture”
   - `state = initSuccess` → `ACPeerVideoView.createConnection(PeerCredentialsDataBean)`
   - `state = pushStopped` → `ACPeerVideoView.disconnect()`
   - `state = initFailed / pushFailed / agoraFailed` → erreur + code
@@ -221,4 +199,4 @@ POST buried/report  Lac/cloud/common/tracking/TrackingApiService;  /home/kaj/Dow
 ## 6) Remarques
 
 - Aucun endpoint explicite `api/user/profile/getVideoUrl` ou `stopVideo` n’est présent dans l’APK 1.1.27. L’arrêt de capture passe par MQTT (`action = stopCapture`).
-- La logique vidéo combine MQTT + `PeerVideoService` (credentials AWS + token Agora/Shengwang).
+- La logique vidéo combine `PeerVideoService` (credentials AWS + token Agora/Shengwang).

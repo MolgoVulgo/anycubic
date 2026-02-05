@@ -1,9 +1,9 @@
 import json
 import os
+from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
-import httpx
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from ...api import get_printer_info_v2, get_projects, list_printers
 from ...client import CloudClient
+from ...image_cache import fetch_image_bytes
 from ..threads import TaskRunner
 
 
@@ -80,6 +81,10 @@ class PrinterTab(QWidget):
         self._runner = TaskRunner()
         self._printers: Dict[str, Dict[str, Any]] = {}
         self._thumbs_enabled = os.getenv("ACCLOUD_DISABLE_THUMBS", "0") not in ("1", "true", "TRUE")
+        self._on_printer_id_changed: Optional[Callable[[str], None]] = None
+        self._image_cache: "OrderedDict[str, QPixmap]" = OrderedDict()
+        self._image_inflight = set()
+        self._image_cache_max = 64
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -93,6 +98,7 @@ class PrinterTab(QWidget):
         top.addWidget(self.printer_combo, 1)
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setCursor(Qt.PointingHandCursor)
+        self.refresh_btn.setToolTip("Refresh printer list")
         self.refresh_btn.clicked.connect(self.refresh)
         top.addWidget(self.refresh_btn)
         root.addLayout(top)
@@ -116,6 +122,9 @@ class PrinterTab(QWidget):
     def set_client(self, client: CloudClient) -> None:
         self._client = client
         self.refresh()
+
+    def set_printer_id_callback(self, callback: Callable[[str], None]) -> None:
+        self._on_printer_id_changed = callback
 
     def refresh(self) -> None:
         if not self._client:
@@ -146,6 +155,32 @@ class PrinterTab(QWidget):
             self.printer_combo.setCurrentIndex(0)
             self._load_printer_details()
         self._status("Printers loaded.")
+        self._focus_active_printer()
+
+    def _focus_active_printer(self) -> None:
+        if not self._client or self.printer_combo.count() == 0:
+            return
+
+        def work():
+            for idx in range(self.printer_combo.count()):
+                pid = self.printer_combo.itemData(idx)
+                if not pid:
+                    continue
+                data = get_projects(self._client, pid, print_status=1, page=1, limit=1)
+                items = data if isinstance(data, list) else data.get("list") or data.get("rows") or data.get("data") or []
+                if items:
+                    return pid
+            return None
+
+        def done(pid):
+            if not pid:
+                return
+            for idx in range(self.printer_combo.count()):
+                if self.printer_combo.itemData(idx) == pid:
+                    self.printer_combo.setCurrentIndex(idx)
+                    break
+
+        self._runner.run(work, on_result=done, on_error=self._on_error)
 
     def _on_printer_changed(self, _index: int) -> None:
         self._load_printer_details()
@@ -166,6 +201,8 @@ class PrinterTab(QWidget):
             on_result=self._apply_projects,
             on_error=self._on_error,
         )
+        if self._on_printer_id_changed:
+            self._on_printer_id_changed(pid)
 
     def _selected_printer_id(self) -> Optional[str]:
         if self.printer_combo.count() == 0:
@@ -175,12 +212,16 @@ class PrinterTab(QWidget):
     def _build_left(self) -> None:
         layout = QGridLayout(self.left)
         layout.setContentsMargins(12, 12, 12, 12)
-        layout.setVerticalSpacing(6)
+        layout.setVerticalSpacing(2)
 
         self.left_name = QLabel("-")
         self.left_status = QLabel("-")
         self.left_type = QLabel("-")
         self.left_device = QLabel("-")
+        self.left_image = QLabel()
+        self.left_image.setFixedSize(200, 200)
+        self.left_image.setStyleSheet("background: #f2f2f2; border: 1px solid #dddddd;")
+        self.left_image.setAlignment(Qt.AlignCenter)
 
         layout.addWidget(QLabel("Name:"), 0, 0)
         layout.addWidget(self.left_name, 0, 1)
@@ -190,11 +231,12 @@ class PrinterTab(QWidget):
         layout.addWidget(self.left_type, 2, 1)
         layout.addWidget(QLabel("Device CN:"), 3, 0)
         layout.addWidget(self.left_device, 3, 1)
+        layout.addWidget(self.left_image, 4, 0, 1, 2)
 
     def _build_center(self) -> None:
         layout = QVBoxLayout(self.center)
         layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setSpacing(2)
 
         self.job_name = QLabel("-")
         self.job_name.setStyleSheet("font-weight: 600;")
@@ -222,6 +264,8 @@ class PrinterTab(QWidget):
         self.stop_btn = QPushButton("Stop")
         self.pause_btn.setCursor(Qt.PointingHandCursor)
         self.stop_btn.setCursor(Qt.PointingHandCursor)
+        self.pause_btn.setToolTip("Pause current print")
+        self.stop_btn.setToolTip("Stop current print")
         self.pause_btn.clicked.connect(self._pause_not_implemented)
         self.stop_btn.clicked.connect(self._stop_not_implemented)
         buttons.addWidget(self.pause_btn)
@@ -231,7 +275,7 @@ class PrinterTab(QWidget):
     def _build_right(self) -> None:
         layout = QGridLayout(self.right)
         layout.setContentsMargins(12, 12, 12, 12)
-        layout.setVerticalSpacing(6)
+        layout.setVerticalSpacing(2)
 
         self.metrics_elapsed = QLabel("-")
         self.metrics_remaining = QLabel("-")
@@ -261,6 +305,20 @@ class PrinterTab(QWidget):
         self.left_type.setText(str(machine))
         self.left_status.setText(str(status))
         self.left_device.setText(str(device))
+        img_url = (
+            info.get("image_id")
+            or info.get("img")
+            or info.get("image")
+            or info.get("thumbnail")
+            or info.get("machine_img")
+            or info.get("machine_image")
+            or info.get("printer_img")
+            or info.get("printer_image")
+        )
+        if self._thumbs_enabled and img_url:
+            self._load_image(self.left_image, img_url, 180)
+        else:
+            self.left_image.clear()
 
     def _apply_projects(self, data: Dict[str, Any]) -> None:
         if not self.isVisible():
@@ -341,21 +399,39 @@ class PrinterTab(QWidget):
         return _fmt_seconds_hms(remain)
 
     def _load_preview(self, url: str) -> None:
+        self._load_image(self.preview, url, 200)
+
+    def _load_image(self, target: QLabel, url: str, size: int) -> None:
+        if url in self._image_cache:
+            pix = self._image_cache.pop(url)
+            self._image_cache[url] = pix
+            target.setPixmap(pix.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            return
+        if url in self._image_inflight:
+            return
+        self._image_inflight.add(url)
+
         def work():
-            with httpx.stream("GET", url, timeout=20.0) as resp:
-                resp.raise_for_status()
-                return resp.read()
+            return fetch_image_bytes(url, timeout=20.0)
 
         def done(data: bytes):
+            self._image_inflight.discard(url)
             if not data:
                 return
             image = QImage()
             image.loadFromData(data)
             if not image.isNull():
                 pix = QPixmap.fromImage(image)
-                self.preview.setPixmap(pix.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self._image_cache[url] = pix
+                while len(self._image_cache) > self._image_cache_max:
+                    self._image_cache.popitem(last=False)
+                target.setPixmap(pix.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
-        self._runner.run(work, on_result=done, on_error=self._on_error)
+        def failed(exc: Exception):
+            self._image_inflight.discard(url)
+            self._on_error(exc)
+
+        self._runner.run(work, on_result=done, on_error=failed)
 
     def _clear_job(self) -> None:
         self.job_name.setText("-")
@@ -372,15 +448,16 @@ class PrinterTab(QWidget):
 
     def _derive_status(self, info: Dict[str, Any]) -> str:
         connect_status = info.get("connect_status")
+        device_status = info.get("device_status")
         print_status = info.get("print_status")
         pause = info.get("pause")
         state = info.get("state")
-        if connect_status in (0, "0"):
+        if connect_status in (0, "0") or device_status in (0, "0"):
             return "Offline"
-        if pause in (1, "1") or state == "paused":
-            return "Paused"
         if print_status in (1, "1") or state == "printing":
             return "Busy"
+        if pause in (1, "1") or state == "paused":
+            return "Paused"
         return "Idle"
 
     def _pause_not_implemented(self) -> None:

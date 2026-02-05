@@ -76,6 +76,7 @@ docs/
 - If API calls fail, re-import a fresh HAR session.
 - Ensure you are logged in in the browser before exporting HAR.
 - MQTT tab depends on local log file existence.
+- `accloud_http.log` rotates daily and keeps 7 days of `.tar.gz` archives.
 
 ---
 
@@ -155,3 +156,4 @@ docs/
 - Si les appels échouent, réimporter un HAR récent.
 - Vérifier que la session navigateur est valide avant l’export.
 - L’onglet MQTT dépend de la présence des logs locaux.
+- `accloud_http.log` est journalier et conserve 7 jours d’archives `.tar.gz`.

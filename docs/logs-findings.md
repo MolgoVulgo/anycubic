@@ -58,19 +58,3 @@ Source : `docs/logs/*.log`
 ## Environnement
 
 - `https://workbentch.s3.us-east-2.amazonaws.com/workshop/environment.ini`
-
-## MQTT
-
-- `mqtt.anycubic.com:8883` (CN)
-- `mqtt-universe.anycubic.com:8883` (EN)
-
-### MQTT observations (cloud_Log.log)
-
-- Client ID seen: `pc_eddf9dc9ece959c70ffb8fae7d76bbf1`.
-- Payloads are truncated in logs (single-line prefix only), so full JSON bodies are not available.
-- Inbound PUBLISH payload types observed:
-  - `{"type":"lastWill", ...}` (payload len 180) around `2026-02-02 11:17:06`.
-  - `{"type":"status", ...}` (payload len 159) around `2026-02-02 11:17:06` and `2026-02-02 11:18:33`.
-  - `{"type":"print", ...}` (payload len 525) repeated at `11:18:34`, `11:19:06`, `11:19:37`, `11:20:07`, `11:20:38`, `11:21:08`, `11:21:39`, `11:22:09`, `11:22:18`.
-- Each inbound message is followed by an outbound publish with a small `{"msgid":"..."}` payload (len 49), likely an ACK/receipt.
-- No explicit MQTT topics appear in logs (no `SUBSCRIBE`/`topic=` lines).

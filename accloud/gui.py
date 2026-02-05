@@ -8,12 +8,13 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Optional
 
-import httpx
 import json
+import httpx
 from PIL import Image, ImageTk
 
 from .api import delete_files, get_download_url, get_gcode_info, get_quota, list_files, upload_file, list_printers, get_printer_info_v2, get_projects, send_print_order, send_video_order
 from .client import CloudClient
+from .image_cache import fetch_image_bytes
 from .session_store import (
     DEFAULT_SESSION_PATH,
     load_session,
@@ -119,10 +120,6 @@ class App:
         self.items_by_id = {}
         self._thumb_cache = {}
         self._tree_id_map = {}
-        self._mqtt_log_path = os.path.join("docs", "logs", "cloud_Log.log")
-        self._mqtt_tail_offset = 0
-        self._mqtt_missing_logged = False
-        self._mqtt_out_log_path = os.path.join(os.getcwd(), "accloud_mqtt.log")
         self._printers_cache = []
         self._last_printer_info = None
         self._last_job_item = None
@@ -133,7 +130,7 @@ class App:
         self._printer_poll_after_id = None
         self._build_ui()
         self._auto_load()
-        self._start_mqtt_tail()
+        # MQTT tab removed in Qt; keep Tk UI minimal.
         self._start_printer_poll()
 
     def _build_ui(self) -> None:
@@ -164,12 +161,10 @@ class App:
 
         files_tab = ttk.Frame(notebook)
         printer_tab = ttk.Frame(notebook)
-        mqtt_tab = ttk.Frame(notebook)
         print_tab = ttk.Frame(notebook)
         log_tab = ttk.Frame(notebook)
         notebook.add(files_tab, text="Fichiers")
         notebook.add(printer_tab, text="Printer")
-        notebook.add(mqtt_tab, text="MQTT")
         notebook.add(print_tab, text="Print")
         notebook.add(log_tab, text="LOG")
 
@@ -284,11 +279,6 @@ class App:
         self.printer_box = ScrolledText(printer_output, height=20, state="disabled")
         self.printer_box.pack(fill="both", expand=True)
 
-        mqtt_frame = ttk.Frame(mqtt_tab, padding=10)
-        mqtt_frame.pack(fill="both", expand=True)
-        ttk.Label(mqtt_frame, text="MQTT (tail)").pack(anchor="w")
-        self.mqtt_box = ScrolledText(mqtt_frame, height=20, state="disabled")
-        self.mqtt_box.pack(fill="both", expand=True)
 
         print_frame = ttk.Frame(print_tab, padding=10)
         print_frame.pack(fill="both", expand=True)
@@ -366,19 +356,6 @@ class App:
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
 
-    def _mqtt_log(self, msg: str) -> None:
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        line = f"[{timestamp}] {msg}\n"
-        self.mqtt_box.configure(state="normal")
-        self.mqtt_box.insert("1.0", line)
-        self.mqtt_box.see("1.0")
-        self.mqtt_box.configure(state="disabled")
-        try:
-            with open(self._mqtt_out_log_path, "a", encoding="utf-8") as handle:
-                handle.write(line)
-        except Exception:
-            pass
-
     def _print_log(self, msg: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
         line = f"[{timestamp}] {msg}\n"
@@ -400,9 +377,6 @@ class App:
         self.print_box.delete("1.0", "end")
         self.print_box.configure(state="disabled")
 
-    def _start_mqtt_tail(self) -> None:
-        self.root.after(500, self._poll_mqtt_log)
-
     def _start_printer_poll(self) -> None:
         self._schedule_printer_poll(1500)
 
@@ -422,31 +396,10 @@ class App:
         next_delay = self._printer_poll_interval_active_ms if self._has_active_print else self._printer_poll_interval_idle_ms
         self._schedule_printer_poll(next_delay)
 
-    def _poll_mqtt_log(self) -> None:
-        if not os.path.exists(self._mqtt_log_path):
-            if not self._mqtt_missing_logged:
-                self._log(f"MQTT log not found: {self._mqtt_log_path}")
-                self._mqtt_missing_logged = True
-            self.root.after(2000, self._poll_mqtt_log)
-            return
-
-        try:
-            with open(self._mqtt_log_path, "r", encoding="utf-8", errors="ignore") as handle:
-                handle.seek(self._mqtt_tail_offset)
-                for line in handle:
-                    self._mqtt_log(line.strip())
-                self._mqtt_tail_offset = handle.tell()
-        except Exception as exc:
-            self._log(f"MQTT tail failed: {exc}")
-
-        self.root.after(2000, self._poll_mqtt_log)
-
     def _load_thumbnail(self, item_id: str, url: str) -> None:
         def worker() -> None:
             try:
-                with httpx.stream("GET", url, timeout=20.0) as resp:
-                    resp.raise_for_status()
-                    data = resp.read()
+                data = fetch_image_bytes(url, timeout=20.0)
                 img = Image.open(BytesIO(data)).convert("RGB")
                 img = img.resize((150, 150))
                 tk_img = ImageTk.PhotoImage(img)
@@ -1144,9 +1097,7 @@ class App:
     def _load_job_preview(self, url: str) -> None:
         def worker() -> None:
             try:
-                with httpx.stream("GET", url, timeout=20.0) as resp:
-                    resp.raise_for_status()
-                    data = resp.read()
+                data = fetch_image_bytes(url, timeout=20.0)
                 img = Image.open(BytesIO(data)).convert("RGB")
                 img = img.resize((200, 200))
                 tk_img = ImageTk.PhotoImage(img)
@@ -1607,9 +1558,7 @@ class App:
 
             def worker() -> None:
                 try:
-                    with httpx.stream("GET", url, timeout=20.0) as resp:
-                        resp.raise_for_status()
-                        data = resp.read()
+                    data = fetch_image_bytes(url, timeout=20.0)
                     img = Image.open(BytesIO(data)).convert("RGB")
                     img = img.resize((320, 320))
                     tk_img = ImageTk.PhotoImage(img)
