@@ -174,7 +174,12 @@ class FileCard(QFrame):
 
 
 class FilesTab(QWidget):
-    def __init__(self, status_cb: Optional[Callable[[str], None]] = None, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        status_cb: Optional[Callable[[str], None]] = None,
+        parent: Optional[QWidget] = None,
+        on_print_started: Optional[Callable[[str], None]] = None,
+    ) -> None:
         super().__init__(parent)
         self._status = status_cb or (lambda _msg: None)
         self._client: Optional[CloudClient] = None
@@ -182,6 +187,7 @@ class FilesTab(QWidget):
         self._cards = {}
         self._detail_windows = []
         self._thumbs_enabled = os.getenv("ACCLOUD_DISABLE_THUMBS", "0") not in ("1", "true", "TRUE")
+        self._on_print_started = on_print_started
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -327,7 +333,7 @@ class FilesTab(QWidget):
         if not self._client:
             QMessageBox.information(self, "Print", "Load a session first.")
             return
-        dialog = PrintDialog(self._client, item, parent=self)
+        dialog = PrintDialog(self._client, item, parent=self, on_print_success=self._on_print_started)
         dialog.exec()
 
     def _open_details(self, item: FileItem) -> None:

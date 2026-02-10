@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QImage, QPixmap
@@ -58,12 +58,19 @@ def _fmt_float(value: Any, decimals: int = 2) -> str:
 
 
 class PrintDialog(QDialog):
-    def __init__(self, client: CloudClient, item: FileItem, parent=None) -> None:
+    def __init__(
+        self,
+        client: CloudClient,
+        item: FileItem,
+        parent=None,
+        on_print_success: Optional[Callable[[str], None]] = None,
+    ) -> None:
         super().__init__(parent)
         self._client = client
         self._item = item
         self._runner = TaskRunner()
-        self._printers: Dict[str, str] = {}
+        self._printers: Dict[str, Dict[str, Any]] = {}
+        self._on_print_success = on_print_success
 
         self.setWindowTitle("Print")
         self.setModal(True)
@@ -158,7 +165,8 @@ class PrintDialog(QDialog):
                 pid = str(item.get("id") or item.get("printer_id") or item.get("device_id") or "")
                 name = item.get("printer_name") or item.get("machine_name") or item.get("name") or pid
                 if pid:
-                    self._printers[name] = pid
+                    item["_pid"] = pid
+                    self._printers[name] = item
                     self.printer_combo.addItem(name)
             self.printer_combo.blockSignals(False)
             if self.printer_combo.count() > 0:
@@ -210,9 +218,15 @@ class PrintDialog(QDialog):
 
     def _start_print(self) -> None:
         name = self.printer_combo.currentText()
-        pid = self._printers.get(name)
+        entry = self._printers.get(name)
+        pid = entry.get("_pid") if entry else None
         if not pid:
             QMessageBox.information(self, "Print", "Select a printer.")
+            return
+        device_status = entry.get("device_status") if entry else None
+        reason = entry.get("reason")
+        if device_status in (0, "0", 2, "2") or reason == "offline":
+            QMessageBox.information(self, "Print", "Imprimante hors ligne. Impossible de lancer une impression.")
             return
 
         project_id = "0"
@@ -241,6 +255,8 @@ class PrintDialog(QDialog):
             )
 
         def done(_data):
+            if self._on_print_success:
+                self._on_print_success(str(pid))
             self.accept()
 
         def err(exc: Exception) -> None:

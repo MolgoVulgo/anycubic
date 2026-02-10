@@ -24,8 +24,8 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget(self)
         self.setCentralWidget(self.tabs)
 
-        self.files_tab = FilesTab(status_cb=self._set_status)
         self.printer_tab = PrinterTab(status_cb=self._set_status)
+        self.files_tab = FilesTab(status_cb=self._set_status, on_print_started=self.printer_tab.notify_print_started)
         self.task_history_tab = TaskHistoryTab(status_cb=self._set_status)
         self.log_tab = LogTab()
 
