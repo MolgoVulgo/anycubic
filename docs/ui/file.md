@@ -13,7 +13,11 @@ Bouton “Upload file” (gauche)
 Icône : nuage avec flèche vers le haut.
 Texte : “Upload file”.
 Style : bouton bleu clair, coins arrondis.
-Action : ouvre un sélecteur de fichier système.
+Action : ouvre une boite de dialogue d’upload.
+Contenu de la boite de dialogue :
+- Un bouton “File” permettant de choisir le fichier.
+- Une case a cocher pour “selectionner l’imprimante” et permettre de lancer l’impression directement apres l’upload.
+- Une case a cocher pour supprimer le fichier apres impression.
 Indicateur d’espace de stockage (centre)
 Texte : Space use: 1.06GB/2.00GB
 Police : discrète, gris moyen.

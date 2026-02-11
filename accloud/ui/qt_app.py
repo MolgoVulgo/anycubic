@@ -39,6 +39,7 @@ class MainWindow(QMainWindow):
         self._auto_load_session()
         self._apply_pointer_cursors()
         self.printer_tab.set_printer_id_callback(self.task_history_tab.set_printer_id)
+        self.printer_tab.set_print_completed_callback(self.files_tab.on_print_completed)
 
     def _apply_pointer_cursors(self) -> None:
         for btn in self.findChildren(QPushButton):

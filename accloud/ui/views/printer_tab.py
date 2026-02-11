@@ -107,12 +107,14 @@ class PrinterTab(QWidget):
         self._printers: Dict[str, Dict[str, Any]] = {}
         self._thumbs_enabled = os.getenv("ACCLOUD_DISABLE_THUMBS", "0") not in ("1", "true", "TRUE")
         self._on_printer_id_changed: Optional[Callable[[str], None]] = None
+        self._on_print_completed: Optional[Callable[[str], None]] = None
         self._image_cache: "OrderedDict[str, QPixmap]" = OrderedDict()
         self._image_inflight = set()
         self._image_cache_max = 64
         self._poll_interval_idle_ms = 15000
         self._poll_interval_active_ms = 5000
         self._has_active_print = False
+        self._was_active_print = False
         self._job_is_paused = False
         self._elapsed_seconds: Optional[int] = None
         self._remaining_seconds: Optional[int] = None
@@ -166,10 +168,14 @@ class PrinterTab(QWidget):
     def set_printer_id_callback(self, callback: Callable[[str], None]) -> None:
         self._on_printer_id_changed = callback
 
+    def set_print_completed_callback(self, callback: Callable[[str], None]) -> None:
+        self._on_print_completed = callback
+
     def notify_print_started(self, printer_id: Optional[str] = None) -> None:
         if not self._client:
             return
         self._has_active_print = True
+        self._was_active_print = True
         self._job_is_paused = False
         self._ensure_time_timer()
         if printer_id:
@@ -446,12 +452,18 @@ class PrinterTab(QWidget):
         else:
             items = data.get("list") or data.get("rows") or data.get("data") or []
         if not items:
+            was_active = self._was_active_print
             self._has_active_print = False
+            self._was_active_print = False
             self._job_is_paused = False
             self._elapsed_seconds = None
             self._remaining_seconds = None
             self._ensure_time_timer()
             self._clear_job()
+            if was_active and self._on_print_completed:
+                pid = self._selected_printer_id()
+                if pid:
+                    self._on_print_completed(pid)
             return
         job = items[0]
         settings = _parse_json(job.get("settings"))
@@ -471,7 +483,7 @@ class PrinterTab(QWidget):
 
         self.metrics_layers.setText(f"{curr_layer} / {total_layers}")
         self.metrics_resin.setText(self._fmt_resin(job, settings, slice_param))
-        self.metrics_size.setText(self._fmt_size(slice_param))
+        self.metrics_size.setText(self._fmt_size(slice_param, settings))
 
         img_url = job.get("img") or job.get("image_id")
         if self._thumbs_enabled and img_url:
@@ -479,6 +491,8 @@ class PrinterTab(QWidget):
 
         job_status = self._derive_job_status(job, settings)
         self._has_active_print = job_status in ("Busy", "Paused")
+        if self._has_active_print:
+            self._was_active_print = True
         self._job_is_paused = job_status == "Paused"
         self._sync_time_counters(job, settings)
         self._ensure_time_timer()
@@ -491,16 +505,30 @@ class PrinterTab(QWidget):
             val = job.get("material")
         return f"{_fmt_float(val, 2)}ml" if val is not None else "-"
 
-    def _fmt_size(self, slice_param: Dict[str, Any]) -> str:
+    def _fmt_size(self, slice_param: Dict[str, Any], settings: Dict[str, Any]) -> str:
         try:
             x = float(slice_param.get("size_x") or 0)
             y = float(slice_param.get("size_y") or 0)
             z = float(slice_param.get("size_z") or 0)
         except (TypeError, ValueError):
             return "-"
+        if z == 0:
+            try:
+                layers = int(slice_param.get("layers") or settings.get("total_layers") or 0)
+                zthick = float(slice_param.get("zthick") or settings.get("z_thick") or 0)
+                if layers and zthick:
+                    z = layers * zthick
+            except (TypeError, ValueError):
+                z = 0
         if x == 0 and y == 0:
-            return "-"
-        return f"{_fmt_float(x, 2)} x {_fmt_float(y, 2)} x {_fmt_float(z, 2)} mm"
+            if z == 0:
+                return "-"
+            cm = z / 10.0
+            return f"H: {_fmt_float(z, 2)} mm ({_fmt_float(cm, 2)} cm)"
+        if z == 0:
+            return f"{_fmt_float(x, 2)} x {_fmt_float(y, 2)} mm"
+        cm = z / 10.0
+        return f"{_fmt_float(x, 2)} x {_fmt_float(y, 2)} x {_fmt_float(z, 2)} mm ({_fmt_float(cm, 2)} cm)"
 
     def _fmt_elapsed(self, job: Dict[str, Any]) -> str:
         elapsed = self._calc_elapsed_seconds(job)

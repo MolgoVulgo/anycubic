@@ -20,6 +20,7 @@ docs/mqtt.txt
 *.log
 accloud_http.log
 accloud_mqtt.log
+accloud_http.tar.gz.*
 
 # Python cache / venv
 __pycache__/
@@ -45,3 +46,4 @@ coverage.xml
 *.dll
 *.so
 *.dylib
+

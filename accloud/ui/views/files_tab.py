@@ -6,6 +6,7 @@ import httpx
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -24,7 +25,6 @@ from ...api import (
     get_gcode_info,
     get_quota,
     list_files,
-    upload_file,
 )
 from ...client import CloudClient
 from ...models import FileItem
@@ -32,6 +32,7 @@ from ...image_cache import fetch_image_bytes
 from ..threads import TaskRunner
 from .file_details import FileDetailsWindow
 from .print_dialog import PrintDialog
+from .upload_dialog import UploadDialog
 
 
 def _format_ts(ts: int) -> str:
@@ -188,6 +189,8 @@ class FilesTab(QWidget):
         self._detail_windows = []
         self._thumbs_enabled = os.getenv("ACCLOUD_DISABLE_THUMBS", "0") not in ("1", "true", "TRUE")
         self._on_print_started = on_print_started
+        self._pending_delete_file_id: Optional[str] = None
+        self._pending_delete_printer_id: Optional[str] = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -273,15 +276,48 @@ class FilesTab(QWidget):
         if not self._client:
             QMessageBox.information(self, "Upload", "Load a session first.")
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Select file to upload")
-        if not path:
+        dialog = UploadDialog(self._client, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        result = dialog.result_data()
+        file_item = result.get("file_item")
+        print_after = bool(result.get("print_after"))
+        delete_after = bool(result.get("delete_after"))
+        self._status("Upload ok")
+        self.refresh()
+
+        if not print_after or not file_item:
             return
 
-        def work():
-            return upload_file(self._client, path)
+        def on_print_success(printer_id: str) -> None:
+            if self._on_print_started:
+                self._on_print_started(printer_id)
+            if not delete_after:
+                return
+            self._pending_delete_file_id = file_item.id
+            self._pending_delete_printer_id = printer_id
 
-        def done(file_id):
-            self._status(f"Upload ok (id={file_id})")
+        dialog = PrintDialog(self._client, file_item, parent=self, on_print_success=on_print_success)
+        dialog.exec()
+
+    def on_print_completed(self, printer_id: str) -> None:
+        if not self._client:
+            return
+        if not self._pending_delete_file_id:
+            return
+        if self._pending_delete_printer_id and self._pending_delete_printer_id != printer_id:
+            return
+
+        file_id = self._pending_delete_file_id
+        self._pending_delete_file_id = None
+        self._pending_delete_printer_id = None
+
+        def work():
+            delete_files(self._client, [file_id])
+            return True
+
+        def done(_):
+            self._status("Deleted after print")
             self.refresh()
 
         self._runner.run(work, on_result=done, on_error=self._on_error)
